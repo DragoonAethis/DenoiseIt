@@ -10,6 +10,7 @@ A tiny utility to run an audio file through RNNoise.
   seconds into RNNoise before writing any output" - if the file starts with long noisy silence, you may bump this value
   or edit the input file with Audacity. The first few ms may contain a "bump" if the prefeed period ends while speaking.
 
+If you're using Arch, this utility is available in AUR as [denoiseit-git](https://aur.archlinux.org/packages/denoiseit-git/).
 
 ## How to build
 
