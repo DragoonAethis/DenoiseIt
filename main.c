@@ -167,8 +167,10 @@ int main(int argc, char ** argv) {
     // Create the multi-channel frame:
     float * full_frame = calloc(sizeof(float), rnnoise_frame_size * channels);
 
-    int is_prefeeding = prefeed_seconds > 0.0f;
-    sf_count_t prefeed_frames_left = prefeed_seconds * input_info.samplerate;
+    int prefeed_stages_remaining = 0;
+    if (prefeed_seconds > 0.0f) prefeed_stages_remaining = 2;
+
+    sf_count_t prefeed_frames_left = (sf_count_t)(prefeed_seconds * (float)input_info.samplerate);
     printf("Needs %ld frames for prefeed\n", prefeed_frames_left);
 
     if (prefeed_frames_left > input_frames) {
@@ -211,7 +213,7 @@ int main(int argc, char ** argv) {
             rnnoise_process_frame(state[ch].ds, state[ch].output, state[ch].input);
             bzero(state[ch].input, rnnoise_frame_size * sizeof(float));
 
-            if (!is_prefeeding) {
+            if (!prefeed_stages_remaining) {
                 // We still need the original audio, don't denoise the prefed period twice!
                 for (int sample = 0; sample < rnnoise_frame_size; sample++) {
                     full_frame[ch + (sample * channels)] = state[ch].output[sample] / 32768.0f;
@@ -220,7 +222,7 @@ int main(int argc, char ** argv) {
 
         }
 
-        if (!is_prefeeding) {
+        if (!prefeed_stages_remaining) {
             // At this point, full_frame contains denoised audio (hopefully).
             // Write it to the output and move our frame pointer forward.
             if (sf_writef_float(output_file, full_frame+write_from, write_frames) != write_frames) {
@@ -231,14 +233,24 @@ int main(int argc, char ** argv) {
         } else {
             prefeed_frames_left -= write_frames;
             if (prefeed_frames_left <= 0) {
-                // Disable prefeed, rewind the input file, do the actual thing!
-                printf("Prefeed completed\n");
-                is_prefeeding = 0;
-                prefeed_frames_left = 0;
+                // Move to the next prefeed/processing stage, rewind the input file.
+
+                // The reason we're doing 2 prefeed stages is that you usually want
+                // prefeed due to the audio file starting with noise to be removed.
+                // If we prefeed a few seconds of audio to the denoiser, it'll be
+                // able to detect that noise, but when the denoiser input changes
+                // from someone speaking to noise in an instant, it'll output a
+                // short "pop". The 2nd prefeed stage feeds it some raw noise, so
+                // that this "pop" is not present in the output. It's still not
+                // completely perfect, but masks the issue well enough.
+
+                prefeed_stages_remaining -= 1;
+                prefeed_frames_left = rnnoise_frame_size;
 
                 current_frame = 0;
                 sf_seek(input_file, 0, SEEK_SET);
 
+                printf("Prefeed stage completed (%d remaining)\n", prefeed_stages_remaining);
                 continue; // Don't bump current frames below at this point.
             }
         }
